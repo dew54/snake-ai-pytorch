@@ -1,11 +1,20 @@
 import pygame
 import random
+import numpy as np
+import pickle
+
+from collections import deque
+
+
 from enum import Enum
 from collections import namedtuple
+from game import SnakeGameAI, Direction, Point
 
 pygame.init()
 font = pygame.font.Font('arial.ttf', 25)
 #font = pygame.font.SysFont('arial', 25)
+
+
 
 class Direction(Enum):
     RIGHT = 1
@@ -25,6 +34,9 @@ BLACK = (0,0,0)
 BLOCK_SIZE = 20
 SPEED = 20
 
+MAX_MEMORY = 100_000
+
+
 class SnakeGame:
     
     def __init__(self, w=640, h=480):
@@ -34,6 +46,8 @@ class SnakeGame:
         self.display = pygame.display.set_mode((self.w, self.h))
         pygame.display.set_caption('Snake')
         self.clock = pygame.time.Clock()
+        self.memory = deque(maxlen=MAX_MEMORY) # popleft()
+        self.file_path = 'experience_replay.pkl'
         
         # init game state
         self.direction = Direction.RIGHT
@@ -53,8 +67,46 @@ class SnakeGame:
         self.food = Point(x, y)
         if self.food in self.snake:
             self._place_food()
+
+    def retrieveAction(self, direction):
+        if self.direction == Direction.UP:
+            switch_dict = {
+            Direction.UP: [1, 0, 0],
+            Direction.LEFT: [0, 0, 1],
+            Direction.RIGHT: [0, 1, 0],
+            Direction.DOWN: [1, 0, 0],
+            # Add more cases as needed
+            }
+        elif self.direction == Direction.LEFT:
+            switch_dict = {
+            Direction.UP: [0, 1, 0],
+            Direction.LEFT: [1, 0, 0],
+            Direction.RIGHT: [1, 0, 0],
+            Direction.DOWN: [0, 0, 1],
+            # Add more cases as needed
+            }
+
+        if self.direction == Direction.DOWN:
+            switch_dict = {
+            Direction.UP: [1, 0, 0],
+            Direction.LEFT: [0, 1, 0],
+            Direction.RIGHT: [0, 0, 1],
+            Direction.DOWN: [1, 0, 0],
+            # Add more cases as needed
+            }
+        elif self.direction == Direction.RIGHT:
+            switch_dict = {
+            Direction.UP: [0, 0, 1],
+            Direction.LEFT: [1, 0, 0],
+            Direction.RIGHT: [1, 0, 0],
+            Direction.DOWN: [0, 1, 0],
+            # Add more cases as needed
+            }
+
+        return switch_dict[direction]
         
     def play_step(self):
+        action = []
         # 1. collect user input
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -62,6 +114,9 @@ class SnakeGame:
                 quit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_LEFT:
+                    if self.direction != Direction.LEFT:
+                        action = [] 
+
                     self.direction = Direction.LEFT
                 elif event.key == pygame.K_RIGHT:
                     self.direction = Direction.RIGHT
@@ -69,20 +124,30 @@ class SnakeGame:
                     self.direction = Direction.UP
                 elif event.key == pygame.K_DOWN:
                     self.direction = Direction.DOWN
-        
+
+        state_old = self.get_state()
+        final_move = self.retrieveAction(self.direction)
+
+                
         # 2. move
+
         self._move(self.direction) # update the head
         self.snake.insert(0, self.head)
+
+        state_new = self.get_state()
+        reward = 0
         
         # 3. check if game over
         game_over = False
         if self._is_collision():
             game_over = True
-            return game_over, self.score
+            reward = -10
+            return reward, game_over, self.score
             
         # 4. place new food or just move
         if self.head == self.food:
             self.score += 1
+            reward = 10
             self._place_food()
         else:
             self.snake.pop()
@@ -90,17 +155,37 @@ class SnakeGame:
         # 5. update ui and clock
         self._update_ui()
         self.clock.tick(SPEED)
-        # 6. return game over and score
-        return game_over, self.score
+
+        # 6 save experience
+
+
+        self.remember(state_old, final_move, reward, state_new, game_over)
+
+        
+
+
+        # 7. return game over and score
+        return reward, game_over, self.score
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done)) # popleft if MAX_MEMORY is reached
     
-    def _is_collision(self):
+
+    def dumpMemory(self):
+        with open(self.file_path, 'wb') as file:
+            pickle.dump(self.memory, file)
+
+
+    def _is_collision(self, pt=None):
+        if pt is None:
+            pt = self.head
         # hits boundary
-        if self.head.x > self.w - BLOCK_SIZE or self.head.x < 0 or self.head.y > self.h - BLOCK_SIZE or self.head.y < 0:
+        if pt.x > self.w - BLOCK_SIZE or pt.x < 0 or pt.y > self.h - BLOCK_SIZE or pt.y < 0:
             return True
         # hits itself
-        if self.head in self.snake[1:]:
+        if pt in self.snake[1:]:
             return True
-        
+
         return False
         
     def _update_ui(self):
@@ -129,6 +214,57 @@ class SnakeGame:
             y -= BLOCK_SIZE
             
         self.head = Point(x, y)
+
+
+    # def _saveExperience(self, ):
+    def get_state(self):
+        head = self.head
+        point_l = Point(head.x - 20, head.y)
+        point_r = Point(head.x + 20, head.y)
+        point_u = Point(head.x, head.y - 20)
+        point_d = Point(head.x, head.y + 20)
+        
+        dir_l = self.direction == Direction.LEFT
+        dir_r = self.direction == Direction.RIGHT
+        dir_u = self.direction == Direction.UP
+        dir_d = self.direction == Direction.DOWN
+
+        state = [
+            # Danger straight
+            (dir_r and self._is_collision(point_r)) or 
+            (dir_l and self._is_collision(point_l)) or 
+            (dir_u and self._is_collision(point_u)) or 
+            (dir_d and self._is_collision(point_d)),
+
+            # Danger right
+            (dir_u and self._is_collision(point_r)) or 
+            (dir_d and self._is_collision(point_l)) or 
+            (dir_l and self._is_collision(point_u)) or 
+            (dir_r and self._is_collision(point_d)),
+
+            # Danger left
+            (dir_d and self._is_collision(point_r)) or 
+            (dir_u and self._is_collision(point_l)) or 
+            (dir_r and self._is_collision(point_u)) or 
+            (dir_l and self._is_collision(point_d)),
+            
+            # Move direction
+            dir_l,
+            dir_r,
+            dir_u,
+            dir_d,
+            
+            # Food location 
+            self.food.x < self.head.x,  # food left
+            self.food.x > self.head.x,  # food right
+            self.food.y < self.head.y,  # food up
+            self.food.y > self.head.y  # food down
+            ]
+
+        return np.array(state, dtype=int)        
+
+
+        
             
 
 if __name__ == '__main__':
@@ -136,9 +272,10 @@ if __name__ == '__main__':
     
     # game loop
     while True:
-        game_over, score = game.play_step()
+        reward, game_over, score = game.play_step()
         
         if game_over == True:
+            game.dumpMemory()
             break
         
     print('Final Score', score)

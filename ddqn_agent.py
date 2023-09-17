@@ -6,26 +6,33 @@ import argparse
 import os
 from collections import deque
 from game import SnakeGameAI, Direction, Point
-from model import Linear_QNet, QTrainer
+from ddqn_model import Linear_DQNet, DQTrainer
+from helper import plot
+
 
 MAX_MEMORY = 100_000
 BATCH_SIZE = 1000
 LR = 0.001
-# MAX_GAMES = int(os.environ.get("MAX_GAMES")) 
+UPDATE_TARGET_EVERY = 10
 
-class Agent:
+# MAX_GAMES =  int(os.environ.get("MAX_GAMES"))
+
+
+class DAgent:
 
     def __init__(self, replay):
         self.n_games = 0
         self.epsilon = 0 # randomness
         self.gamma = 0.9 # discount rate
         self.memory = deque(maxlen=MAX_MEMORY) # popleft()
-        self.model = Linear_QNet(11, 256, 3)
-        self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
+        self.model = Linear_DQNet(11, 256, 3)
+        self.trainer = DQTrainer(self.model, lr=LR, gamma=self.gamma)
         self.file_path = 'experience_replay.pkl'
         parser = argparse.ArgumentParser(description="Script that sets a flag.")
         parser.add_argument("--replay", action="store_true", help="Set this flag.")
-        self.args = parser.parse_args()
+        args = parser.parse_args()
+
+        
 
         if replay:
             print("Loading experience!")
@@ -35,6 +42,7 @@ class Agent:
     def loadExperience(self):
         with open(self.file_path, 'rb') as file:
             self.memory = pickle.load(file)
+
 
     def get_state(self, game):
         head = game.snake[0]
@@ -114,18 +122,20 @@ class Agent:
 
         return final_move
 
+    def update_target_model(self):
+        self.trainer.update_target_model()
 
-def train(nSteps ,replay = None):
+def trainDdqn(nSteps, replay=None):
     MAX_GAMES = nSteps
     plot_scores = []
     plot_mean_scores = []
     total_score = 0
     totalLoss = 0
     record = 0
-    agent = Agent(replay)
+    agent = DAgent(replay)
     game = SnakeGameAI()
+    data = []
     dataLoss = []
-
     while True:
         # get old state
         state_old = agent.get_state(game)
@@ -142,6 +152,9 @@ def train(nSteps ,replay = None):
 
         # remember
         agent.remember(state_old, final_move, reward, state_new, done)
+
+        if agent.n_games % UPDATE_TARGET_EVERY == 0:  # Update the target model every few episodes
+            agent.update_target_model()
 
         if done:
             # train long memory, plot result
@@ -162,37 +175,26 @@ def train(nSteps ,replay = None):
 
             actualLoss = agent.trainer.getActualLoss()
             
-            # totalLoss += actualLoss
+            totalLoss += actualLoss
 
-            # meanLoss = totalLoss/agent.n_games
+            meanLoss = totalLoss/agent.n_games
 
             dataLoss.append(actualLoss)
-            
-            
-            if(agent.n_games >= MAX_GAMES):
 
+            if(agent.n_games >= MAX_GAMES):
                 loss = agent.trainer.getLoss()
-                # print(loss)
+                # loss = agent.model.getLoss
+                data.append(plot_mean_scores)
+
+                print("MEAN SCORE", plot_mean_scores)
 
                 return plot_mean_scores, dataLoss
 
 
-
 if __name__ == '__main__':
     data = []
-    dataLoss = []
-
-    numStep = 50 
-    plot_mean_scores, loss = train(numStep)
-    data.append(plot_mean_scores)
-    dataLoss.append(loss)
-    exp_plot_mean_scores, exp_loss = train("experience")
-    data.append(plot_mean_scores)
-    dataLoss.append(loss)
+    res = (trainDdqn())
+    data[0]= res
+    res_exp = trainDdqn("experience")
+    data[1] = res_exp
     plot(data, ["DQN", "DQN with experience replay"])
-    plot(dataLoss, ["DQN", "DQN with experience replay"], 'orange')
-
-    save_lists_to_csv()
-
-    # plot([loss], "loss")
-    

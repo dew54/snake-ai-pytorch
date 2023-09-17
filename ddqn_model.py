@@ -1,26 +1,23 @@
 import torch
 import torch.nn as nn
+import numpy as np
 import torch.optim as optim
 import torch.nn.functional as F
 import os
-import numpy as np
 
-class Linear_QNet(nn.Module):
+class Linear_DQNet(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
         self.linear1 = nn.Linear(input_size, hidden_size)
         self.linear2 = nn.Linear(hidden_size, output_size)
-        self.loss = []
 
     def forward(self, x):
         x = F.relu(self.linear1(x))
         x = self.linear2(x)
         return x
 
-
-
     def save(self, file_name='model.pth'):
-        model_folder_path = './model'
+        model_folder_path = './D-model'
         if not os.path.exists(model_folder_path):
             os.makedirs(model_folder_path)
 
@@ -28,15 +25,20 @@ class Linear_QNet(nn.Module):
         torch.save(self.state_dict(), file_name)
 
 
-class QTrainer:
+class DQTrainer:
     def __init__(self, model, lr, gamma):
         self.lr = lr
         self.gamma = gamma
         self.model = model
         self.optimizer = optim.Adam(model.parameters(), lr=self.lr)
         self.criterion = nn.MSELoss()
+        self.target_model = model
         self.loss = []
         self.actualLoss = 0
+
+    
+    def update_target_model(self):
+        self.target_model.load_state_dict(self.model.state_dict())
 
     def getLoss(self):
         temp = self.loss
@@ -64,17 +66,16 @@ class QTrainer:
             done = (done, )
 
         # 1: predicted Q values with current state
+        # pred = self.model(state)
         pred = self.model(state)
-        # print(len(action))
 
         target = pred.clone()
         for idx in range(len(done)):
             Q_new = reward[idx]
             if not done[idx]:
-                Q_new = reward[idx] + self.gamma * torch.max(self.model(next_state[idx]))
+                Q_new = reward[idx] + self.gamma * torch.max(self.target_model(next_state[idx]))
 
             target[idx][torch.argmax(action[idx]).item()] = Q_new
-
     
         # 2: Q_new = r + y * max(next_predicted Q value) -> only do this if not done
         # pred.clone()
@@ -84,8 +85,6 @@ class QTrainer:
         loss.backward()
         self.loss.append(loss.item())
         self.actualLoss = loss.item()
-
-        
 
         self.optimizer.step()
 
