@@ -8,7 +8,7 @@ and see the base DQN algorithm training process.
 
 Project Strucrure:
 
-SNAKE:
+SNAKE: <br>
     Environment:
         game.py
     Model:
