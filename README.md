@@ -6,6 +6,8 @@ For a quick run just run:
     python3 agent.py
 and see the base DQN algorithm training process.
 
+Presentation is in .pdf file
+
 Project Strucrure:
 
 SNAKE: <br>
